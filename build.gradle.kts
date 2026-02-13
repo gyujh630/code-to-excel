@@ -24,6 +24,7 @@ dependencies {
       // Add necessary plugin dependencies for compilation here, example:
       // bundledPlugin("com.intellij.java")
     }
+    implementation("org.apache.poi:poi-ooxml:5.2.5")
 }
 
 intellijPlatform {

@@ -21,6 +21,10 @@
                 id="CodeToExcelNotification"
                 displayType="BALLOON"/>
 
+        <postStartupActivity
+                implementation="com.gyujh.codetoexcel.startup.StartupActivity"/>
+
+
     </extensions>
 
     <actions>
