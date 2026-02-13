@@ -1,0 +1,51 @@
+<idea-plugin>
+    <id>com.gyujh.codetoexcel</id>
+    <name>Code To Excel</name>
+    <vendor email="you@example.com">gyujh</vendor>
+
+    <extensions defaultExtensionNs="com.intellij">
+
+        <applicationService
+                serviceImplementation="com.gyujh.codetoexcel.settings.ExcelSettingsState"/>
+
+        <applicationConfigurable
+                instance="com.gyujh.codetoexcel.settings.ExcelSettingsConfigurable"/>
+
+        <toolWindow
+                id="Code To Excel"
+                factoryClass="com.gyujh.codetoexcel.toolwindow.ExcelToolWindowFactory"
+                anchor="right"/>
+
+
+        <notificationGroup
+                id="CodeToExcelNotification"
+                displayType="BALLOON"/>
+
+    </extensions>
+
+    <actions>
+
+        <action
+                id="CodeToExcel.IncreaseRow"
+                class="com.gyujh.codetoexcel.actions.IncreaseRowAction"
+                text="Code To Excel: Increase Base Row">
+            <keyboard-shortcut
+                    keymap="$default"
+                    first-keystroke="ctrl alt shift CLOSE_BRACKET"/>
+        </action>
+
+        <action
+                id="CodeToExcel.DecreaseRow"
+                class="com.gyujh.codetoexcel.actions.DecreaseRowAction"
+                text="Code To Excel: Decrease Base Row">
+            <keyboard-shortcut
+                    keymap="$default"
+                    first-keystroke="ctrl alt shift OPEN_BRACKET"/>
+        </action>
+
+    </actions>
+
+
+
+
+</idea-plugin>

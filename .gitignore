@@ -1,0 +1,56 @@
+# ==============================
+# IntelliJ IDEA
+# ==============================
+.idea/
+*.iml
+*.ipr
+*.iws
+out/
+
+# ==============================
+# Gradle
+# ==============================
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# ==============================
+# Kotlin
+# ==============================
+.kotlin/
+
+# ==============================
+# OS Files
+# ==============================
+.DS_Store
+Thumbs.db
+
+# ==============================
+# Logs
+# ==============================
+*.log
+
+# ==============================
+# Run IDE Sandbox (IntelliJ Plugin)
+# ==============================
+.run/
+sandbox/
+
+# ==============================
+# IntelliJ Plugin build artifacts
+# ==============================
+*.zip
+*.jar
+
+# ==============================
+# Local properties
+# ==============================
+local.properties
+
+# ==============================
+# Mac system files
+# ==============================
+.AppleDouble
+.LSOverride
+# IntelliJ Platform Gradle plugin
+.intellijPlatform/
