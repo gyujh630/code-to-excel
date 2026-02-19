@@ -6,10 +6,9 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 
 object CodeSelectionService {
-
     fun processSelection(project: Project, editor: Editor) {
 
-        val metadata = extractSelectionMetadata(editor) ?: return
+        val metadata = extractSelectionMetadata(project, editor) ?: return
 
         logSelection(metadata)
 
@@ -23,7 +22,10 @@ object CodeSelectionService {
      * Selection 정보를 하나의 객체로 추출
      * 추후 이미지 변환 / Excel 기록에서 재사용
      */
-    private fun extractSelectionMetadata(editor: Editor): SelectionMetadata? {
+    private fun extractSelectionMetadata(
+        project: Project,
+        editor: Editor
+    ): SelectionMetadata? {
 
         val selectionModel = editor.selectionModel
         if (!selectionModel.hasSelection()) return null
@@ -38,18 +40,23 @@ object CodeSelectionService {
 
         val selectedText = selectionModel.selectedText ?: return null
 
-        val virtualFile: VirtualFile? =
-            FileDocumentManager.getInstance().getFile(document)
+        val virtualFile = FileDocumentManager
+            .getInstance()
+            .getFile(document) ?: return null
 
-        val fileName = virtualFile?.name ?: "Unknown"
+        val basePath = project.basePath ?: return null
+        val absolutePath = virtualFile.path
+
+        val relativePath = absolutePath.removePrefix("$basePath/")
 
         return SelectionMetadata(
-            fileName = fileName,
+            fileName = relativePath,   // 🔥 여기 변경
             startLine = startLine,
             endLine = endLine,
             code = selectedText
         )
     }
+
 
     /**
      * 현재는 로그 출력만 수행

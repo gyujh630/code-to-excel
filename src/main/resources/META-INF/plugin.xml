@@ -47,6 +47,15 @@
                     first-keystroke="ctrl alt shift OPEN_BRACKET"/>
         </action>
 
+        <action
+                id="CodeToExcel.WriteSelection"
+                class="com.gyujh.codetoexcel.actions.WriteSelectionToExcelAction"
+                text="Code To Excel"
+                description="Write selected code to Excel">
+
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+
     </actions>
 
 
