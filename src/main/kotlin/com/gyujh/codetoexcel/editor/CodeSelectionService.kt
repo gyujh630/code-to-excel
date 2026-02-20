@@ -18,7 +18,11 @@ object CodeSelectionService {
             project = project,
             code = metadata.code,
             virtualFile = metadata.virtualFile,
-            firstLineNumber = metadata.startLine
+            firstLineNumber = metadata.startLine,
+            options = RenderOptions(
+                headerTitle = metadata.fileName,
+                minCodeAreaWidthPx = 480
+            )
         )
         val basePath = project.basePath ?: return
         val imageDir = Paths.get(basePath, ".codetoexcel")
@@ -55,14 +59,15 @@ object CodeSelectionService {
             .getInstance()
             .getFile(document) ?: return null
 
-        val relativePath = virtualFile.name
+        val basePath = project.basePath ?: return null
+        val relativePath = virtualFile.path.removePrefix("$basePath/").removePrefix(basePath)
 
         return SelectionMetadata(
             fileName = relativePath,
             startLine = startLine,
             endLine = endLine,
             code = selectedText,
-            virtualFile = virtualFile   // 🔥 추가
+            virtualFile = virtualFile
         )
     }
 }

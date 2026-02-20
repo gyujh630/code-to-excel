@@ -8,6 +8,7 @@ import com.intellij.openapi.fileTypes.SyntaxHighlighterFactory
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.util.ui.UIUtil
+import java.awt.Color
 import java.awt.Font
 import java.awt.FontMetrics
 import java.awt.Graphics2D
@@ -20,8 +21,17 @@ data class RenderOptions(
     val paddingY: Int = 14,
     val lineNumberPaddingRight: Int = 12,
     val showLineNumbers: Boolean = true,
-    val maxWidthPx: Int = 900,   // wrap 기준 폭(최대 폭)
-    val fontSize: Int? = null    // null이면 IDE 폰트 크기 사용
+    val maxWidthPx: Int = 900,          // wrap 최대 폭(코드 텍스트 영역 기준)
+    val fontSize: Int? = null,          // null이면 IDE 폰트 크기 사용
+    val tabSize: Int = 4,               // 탭 폭(공백 몇 칸)
+
+    // Header (text only)
+    val showHeader: Boolean = true,
+    val headerGap: Int = 22,            // 헤더-코드 간격
+    val headerTitle: String? = null,    // Service에서 상대경로 넘길 것
+
+    // Layout polish
+    val minCodeAreaWidthPx: Int = 520   // 코드가 짧아도 보기 좋은 최소 폭(텍스트 영역 기준)
 )
 
 object CodeTextImageRenderer {
@@ -45,31 +55,59 @@ object CodeTextImageRenderer {
         val baseFont = schemeToFont(scheme, options)
         val fm = fontMetricsFor(baseFont)
 
-        val lineCount = max(1, code.count { it == '\n' } + 1)
+        // Header text (no line range)
+        val rawHeaderText = options.headerTitle?.takeIf { it.isNotBlank() } ?: virtualFile.name
+        val headerHeight = if (options.showHeader) fm.height else 0
+
+        // line-number digits based on real lines only
+        val realLineCount = max(1, code.count { it == '\n' } + 1)
+        val endLineNumber = firstLineNumber + realLineCount - 1
 
         val lineNumberAreaWidth = if (options.showLineNumbers) {
-            val maxLineNo = firstLineNumber + lineCount - 1
-            val digits = maxLineNo.toString().length
+            val digits = endLineNumber.toString().length
             fm.stringWidth("9".repeat(digits)) + options.lineNumberPaddingRight + 8
         } else 0
 
         val availableTextWidth =
-            (options.maxWidthPx - options.paddingX * 2 - lineNumberAreaWidth).coerceAtLeast(100)
+            (options.maxWidthPx - options.paddingX * 2 - lineNumberAreaWidth).coerceAtLeast(160)
 
         val spans = tokenizeToSpans(code, syntaxHighlighter, scheme, baseFont)
+
+        val startX = options.paddingX + lineNumberAreaWidth
+        val startY = options.paddingY + (if (options.showHeader) headerHeight + options.headerGap else 0)
 
         val layout = LayoutEngine.layout(
             spans = spans,
             fm = fm,
             maxTextWidth = availableTextWidth,
-            startX = options.paddingX + lineNumberAreaWidth,
-            startY = options.paddingY,
-            lineHeight = fm.height
+            startX = startX,
+            startY = startY,
+            lineHeight = fm.height,
+            tabSize = options.tabSize.coerceAtLeast(1),
+            firstLineNumber = firstLineNumber
         )
 
-        // ✅ 우측 공백 제거: "실제 그려진 최대 x"까지만 사용 (padding 포함)
-        val imgW = (layout.maxX + options.paddingX).coerceAtLeast(100)
-        val imgH = (layout.maxY + options.paddingY).coerceAtLeast(fm.height + options.paddingY * 2)
+        // ✅ 폭 결정 규칙:
+        // - 헤더 길이로 폭을 늘리지 않는다
+        // - 코드가 짧으면 minCodeAreaWidthPx 만큼 확보
+        // - 절대 maxWidthPx(텍스트영역 기준)를 넘겨 커지지 않게 상한 적용
+        val minCodeTotalW = options.paddingX * 2 + lineNumberAreaWidth + options.minCodeAreaWidthPx
+        val codeTotalW = layout.maxX + options.paddingX
+
+        val maxImageW = options.paddingX * 2 + lineNumberAreaWidth + options.maxWidthPx
+        val rawImgW = max(max(codeTotalW, minCodeTotalW), 200)
+        val imgW = rawImgW.coerceAtMost(maxImageW)
+
+        val imgH = max(
+            layout.maxY + options.paddingY,
+            options.paddingY * 2 + headerHeight + fm.height
+        )
+
+        // ✅ leading ellipsis: 헤더는 "고정된 imgW"에 맞춰 자른다
+        val headerText = if (options.showHeader) {
+            val maxHeaderTextWidth = (imgW - options.paddingX * 2).coerceAtLeast(40)
+            ellipsizeLeading(rawHeaderText, fm, maxHeaderTextWidth)
+        } else rawHeaderText
 
         val image = UIUtil.createImage(imgW, imgH, BufferedImage.TYPE_INT_ARGB)
         val g = image.createGraphics()
@@ -79,6 +117,18 @@ object CodeTextImageRenderer {
             g.color = scheme.defaultBackground
             g.fillRect(0, 0, imgW, imgH)
 
+            // Header text only
+            if (options.showHeader) {
+                drawHeaderTextOnly(
+                    g = g,
+                    baseFont = baseFont,
+                    text = headerText,
+                    x = options.paddingX,
+                    y = options.paddingY
+                )
+            }
+
+            // Line numbers (no numbers for wrapped visual lines)
             if (options.showLineNumbers) {
                 drawLineNumbers(
                     g = g,
@@ -86,8 +136,7 @@ object CodeTextImageRenderer {
                     fm = fm,
                     lineNumberAreaWidth = lineNumberAreaWidth,
                     baselineOffset = fm.ascent,
-                    lineYs = layout.logicalLineYStarts,
-                    firstLineNumber = firstLineNumber,
+                    visualLines = layout.visualLines,
                     paddingX = options.paddingX
                 )
             }
@@ -100,7 +149,30 @@ object CodeTextImageRenderer {
         return image
     }
 
-    // --------- Tokenization ---------
+    // ---------- Leading ellipsis helper (…/abc/a.java) ----------
+
+    private fun ellipsizeLeading(text: String, fm: FontMetrics, maxWidth: Int): String {
+        if (fm.stringWidth(text) <= maxWidth) return text
+
+        val ell = "…"
+        val ellW = fm.stringWidth(ell)
+        if (ellW >= maxWidth) return ell
+
+        val budget = maxWidth - ellW
+
+        var lo = 0
+        var hi = text.length
+        while (lo < hi) {
+            val mid = (lo + hi + 1) / 2
+            val tail = text.substring(text.length - mid)
+            if (fm.stringWidth(tail) <= budget) lo = mid else hi = mid - 1
+        }
+
+        val tail = text.substring(text.length - lo)
+        return ell + tail
+    }
+
+    // ---------- Tokenization ----------
 
     private fun tokenizeToSpans(
         code: String,
@@ -113,9 +185,7 @@ object CodeTextImageRenderer {
 
         val spans = ArrayList<RenderSpan>(1024)
         while (lexer.tokenType != null) {
-            val start = lexer.tokenStart
-            val end = lexer.tokenEnd
-            val text = code.substring(start, end)
+            val text = code.substring(lexer.tokenStart, lexer.tokenEnd)
 
             val keys = sh.getTokenHighlights(lexer.tokenType!!)
             val attr = resolveAttributes(scheme, keys) ?: TextAttributes().apply {
@@ -149,7 +219,7 @@ object CodeTextImageRenderer {
         dst.fontType = dst.fontType or src.fontType
     }
 
-    // --------- Font / Graphics helpers ---------
+    // ---------- Font / Graphics helpers ----------
 
     private fun schemeToFont(scheme: EditorColorsScheme, options: RenderOptions): Font {
         val family = scheme.editorFontName
@@ -173,7 +243,28 @@ object CodeTextImageRenderer {
         g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
     }
 
-    // --------- Line numbers ---------
+    // ---------- Header (text only) ----------
+
+    private fun drawHeaderTextOnly(
+        g: Graphics2D,
+        baseFont: Font,
+        text: String,
+        x: Int,
+        y: Int
+    ) {
+        val headerFont = baseFont.deriveFont(Font.BOLD, baseFont.size2D)
+        val headerFm = g.getFontMetrics(headerFont)
+
+        val headerColor = Color(255, 248, 200)
+
+        g.font = headerFont
+        g.color = headerColor
+
+        val textY = y + headerFm.ascent
+        g.drawString(text, x, textY)
+    }
+
+    // ---------- Line numbers (wrap 줄은 표시하지 않음) ----------
 
     private fun drawLineNumbers(
         g: Graphics2D,
@@ -181,27 +272,27 @@ object CodeTextImageRenderer {
         fm: FontMetrics,
         lineNumberAreaWidth: Int,
         baselineOffset: Int,
-        lineYs: List<Int>,
-        firstLineNumber: Int,
+        visualLines: List<VisualLine>,
         paddingX: Int
     ) {
         val fg = scheme.defaultForeground
-        val lnColor = java.awt.Color(fg.red, fg.green, fg.blue, 140)
+        val lnColor = Color(fg.red, fg.green, fg.blue, 140)
 
         g.font = fm.font
         g.color = lnColor
 
-        for (i in lineYs.indices) {
-            val lineNo = firstLineNumber + i
+        for (vl in visualLines) {
+            val lineNo = vl.lineNumber ?: continue
             val s = lineNo.toString()
             val textW = fm.stringWidth(s)
-            val x = paddingX + lineNumberAreaWidth - textW - 8
-            val y = lineYs[i] + baselineOffset
-            g.drawString(s, x, y)
+
+            val xx = paddingX + lineNumberAreaWidth - textW - 8
+            val yy = vl.y + baselineOffset
+            g.drawString(s, xx, yy)
         }
     }
 
-    // --------- Layout Engine (MVP, with trailing-space trim) ---------
+    // ---------- Layout Engine (tab stop + word wrap + trailing trim; lineNo only on real lines) ----------
 
     private data class RenderSpan(
         val text: String,
@@ -213,13 +304,18 @@ object CodeTextImageRenderer {
         val text: String,
         val x: Int,
         val y: Int,
-        val color: java.awt.Color,
+        val color: Color,
         val font: Font
+    )
+
+    private data class VisualLine(
+        val y: Int,
+        val lineNumber: Int?
     )
 
     private class Layout(
         private val chunks: MutableList<DrawChunk>,
-        val logicalLineYStarts: List<Int>,
+        val visualLines: List<VisualLine>,
         val maxX: Int,
         val maxY: Int
     ) {
@@ -240,7 +336,9 @@ object CodeTextImageRenderer {
             maxTextWidth: Int,
             startX: Int,
             startY: Int,
-            lineHeight: Int
+            lineHeight: Int,
+            tabSize: Int,
+            firstLineNumber: Int
         ): Layout {
 
             var spanIdx = 0
@@ -249,33 +347,46 @@ object CodeTextImageRenderer {
             var x = startX
             var y = startY
 
-            val logicalLineYStarts = ArrayList<Int>()
-            logicalLineYStarts.add(y)
-
             val chunks = ArrayList<DrawChunk>(2048)
 
             var maxXSeen = startX
             var maxYSeen = startY + lineHeight
 
-            var lineStartChunkIndex = 0 // ✅ 현재 라인의 chunk 시작 인덱스
+            var lineStartChunkIndex = 0
+
+            val spaceW = max(1, fm.charWidth(' '))
+            val tabStopPx = tabSize * spaceW
+
+            var currentRealLineNo = firstLineNumber
+
+            val visualLines = ArrayList<VisualLine>()
+            visualLines.add(VisualLine(y = y, lineNumber = currentRealLineNo))
 
             fun trimLineEnd() {
                 x = trimLineEndSpaces(chunks, fm, x, lineStartChunkIndex)
                 maxXSeen = max(maxXSeen, x)
             }
 
-            fun newline() {
-                // ✅ 줄바꿈 전에 trailing 공백 제거
+            fun newVisualLineFromWrap() {
                 trimLineEnd()
-
                 x = startX
                 y += lineHeight
-                logicalLineYStarts.add(y)
-                lineStartChunkIndex = chunks.size // 다음 라인 시작점 업데이트
+                visualLines.add(VisualLine(y = y, lineNumber = null))
+                lineStartChunkIndex = chunks.size
                 maxYSeen = max(maxYSeen, y + lineHeight)
             }
 
-            fun emit(text: String, color: java.awt.Color, font: Font) {
+            fun newVisualLineFromRealNewline() {
+                trimLineEnd()
+                x = startX
+                y += lineHeight
+                currentRealLineNo += 1
+                visualLines.add(VisualLine(y = y, lineNumber = currentRealLineNo))
+                lineStartChunkIndex = chunks.size
+                maxYSeen = max(maxYSeen, y + lineHeight)
+            }
+
+            fun emit(text: String, color: Color, font: Font) {
                 if (text.isEmpty()) return
                 val drawY = y + fm.ascent
                 chunks.add(DrawChunk(text, x, drawY, color, font))
@@ -283,18 +394,100 @@ object CodeTextImageRenderer {
                 maxXSeen = max(maxXSeen, x)
             }
 
+            fun advanceTab() {
+                val cur = x - startX
+                val next = ((cur / tabStopPx) + 1) * tabStopPx
+                x = startX + next
+                maxXSeen = max(maxXSeen, x)
+            }
+
             fun currentSpan(): RenderSpan? = if (spanIdx in spans.indices) spans[spanIdx] else null
 
-            fun wrapIfNeeded(nextTokenText: String): Boolean {
-                if (nextTokenText.isEmpty()) return false
-                val tokenW = fm.stringWidth(nextTokenText)
-                val curW = x - startX
-                if (curW + tokenW <= maxTextWidth) return false
-                if (curW > 0) {
-                    newline()
-                    return true
+            fun measureWithTabs(s: String): Int {
+                var xx = x
+                for (ch in s) {
+                    if (ch == '\t') {
+                        val cur = xx - startX
+                        val next = ((cur / tabStopPx) + 1) * tabStopPx
+                        xx = startX + next
+                    } else {
+                        xx += fm.charWidth(ch)
+                    }
                 }
-                return false
+                return xx - x
+            }
+
+            fun emitWithTabs(text: String, color: Color, font: Font) {
+                var buf = StringBuilder()
+                for (ch in text) {
+                    when (ch) {
+                        '\t' -> {
+                            if (buf.isNotEmpty()) {
+                                emit(buf.toString(), color, font)
+                                buf = StringBuilder()
+                            }
+                            advanceTab()
+                        }
+                        else -> buf.append(ch)
+                    }
+                }
+                if (buf.isNotEmpty()) emit(buf.toString(), color, font)
+            }
+
+            fun maxCharsThatFitWithTabs(s: String, maxWidth: Int): Int {
+                var xx = x
+                var i = 0
+                while (i < s.length) {
+                    val ch = s[i]
+                    val nextX = if (ch == '\t') {
+                        val cur = xx - startX
+                        val next = ((cur / tabStopPx) + 1) * tabStopPx
+                        startX + next
+                    } else {
+                        xx + fm.charWidth(ch)
+                    }
+                    if (nextX - x > maxWidth) break
+                    xx = nextX
+                    i++
+                }
+                return max(1, i)
+            }
+
+            fun wordWrapEmit(text: String, color: Color, font: Font) {
+                var s = text
+                while (s.isNotEmpty()) {
+                    val available = maxTextWidth - (x - startX)
+                    if (available <= 0) {
+                        newVisualLineFromWrap()
+                        continue
+                    }
+
+                    val w = measureWithTabs(s)
+                    if (w <= available) {
+                        emitWithTabs(s, color, font)
+                        return
+                    }
+
+                    val cut = maxCharsThatFitWithTabs(s, available)
+                    val candidate = s.substring(0, cut)
+
+                    val lastSpace = candidate.lastIndexOf(' ')
+                    val lastTab = candidate.lastIndexOf('\t')
+                    val breakPos = max(lastSpace, lastTab)
+
+                    if (breakPos >= 0) {
+                        val head = s.substring(0, breakPos).trimEnd(' ', '\t')
+                        val tail = s.substring(breakPos + 1)
+                        if (head.isNotEmpty()) emitWithTabs(head, color, font)
+                        newVisualLineFromWrap()
+                        s = tail
+                    } else {
+                        val head = s.substring(0, cut)
+                        emitWithTabs(head, color, font)
+                        newVisualLineFromWrap()
+                        s = s.substring(cut)
+                    }
+                }
             }
 
             while (true) {
@@ -310,47 +503,24 @@ object CodeTextImageRenderer {
                 val nl = remaining.indexOf('\n')
                 val piece = if (nl >= 0) remaining.substring(0, nl) else remaining
 
-                wrapIfNeeded(piece)
-
                 val fg = span.attr.foregroundColor ?: EditorColorsManager.getInstance().globalScheme.defaultForeground
-                val color = fg
+                val color = Color(fg.red, fg.green, fg.blue, 255)
 
-                var p = piece
-                while (p.isNotEmpty()) {
-                    val curW = x - startX
-                    val available = maxTextWidth - curW
-                    if (available <= 0) {
-                        newline()
-                        continue
-                    }
-
-                    val w = fm.stringWidth(p)
-                    if (w <= available) {
-                        emit(p, color, span.font)
-                        p = ""
-                    } else {
-                        val cut = maxCharsThatFit(fm, p, available)
-                        val head = p.substring(0, cut)
-                        emit(head, color, span.font)
-                        p = p.substring(cut)
-                        newline()
-                    }
-                }
+                wordWrapEmit(piece, color, span.font)
 
                 if (nl >= 0) {
                     spanPos += piece.length + 1
-                    newline()
+                    newVisualLineFromRealNewline()
                 } else {
                     spanPos += piece.length
                 }
             }
 
-            // ✅ 마지막 라인도 trailing 공백 제거
             trimLineEnd()
 
             return Layout(
                 chunks = chunks,
-                logicalLineYStarts = logicalLineYStarts,
+                visualLines = visualLines,
                 maxX = maxXSeen,
                 maxY = maxYSeen
             )
@@ -364,35 +534,17 @@ object CodeTextImageRenderer {
         ): Int {
             var x = currentX
             var i = chunks.size - 1
-
             while (i >= lineStartChunkIndex) {
                 val c = chunks[i]
                 val t = c.text
-
                 val trimmed = t.trimEnd(' ', '\t')
-                if (trimmed.length == t.length) break // trailing 공백 없음
-
+                if (trimmed.length == t.length) break
                 val removed = t.substring(trimmed.length)
-                val removedW = fm.stringWidth(removed)
-                x -= removedW
-
+                x -= fm.stringWidth(removed)
                 if (trimmed.isEmpty()) chunks.removeAt(i) else chunks[i] = c.copy(text = trimmed)
                 break
             }
-
             return x
-        }
-
-        private fun maxCharsThatFit(fm: FontMetrics, s: String, maxWidth: Int): Int {
-            var w = 0
-            var i = 0
-            while (i < s.length) {
-                val cw = fm.charWidth(s[i])
-                if (w + cw > maxWidth) break
-                w += cw
-                i++
-            }
-            return max(1, i)
         }
     }
 }
