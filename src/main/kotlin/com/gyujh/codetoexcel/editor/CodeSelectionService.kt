@@ -3,25 +3,36 @@ package com.gyujh.codetoexcel.editor
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
-import com.intellij.openapi.vfs.VirtualFile
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.util.UUID
+import javax.imageio.ImageIO
 
 object CodeSelectionService {
+
     fun processSelection(project: Project, editor: Editor) {
 
         val metadata = extractSelectionMetadata(project, editor) ?: return
 
-        logSelection(metadata)
+        val image = CodeTextImageRenderer.render(
+            project = project,
+            code = metadata.code,
+            virtualFile = metadata.virtualFile,
+            firstLineNumber = metadata.startLine
+        )
+        val basePath = project.basePath ?: return
+        val imageDir = Paths.get(basePath, ".codetoexcel")
 
-        // 🔥 확장 포인트
-        // CodeImageRenderer.render(metadata)
-        // ExcelWriter.writeCode(metadata)
-        // RowManager.increment()
+        Files.createDirectories(imageDir)
+
+        val fileName = "${UUID.randomUUID()}.png"
+        val outputPath = imageDir.resolve(fileName)
+
+        ImageIO.write(image, "png", outputPath.toFile())
+
+        println("Image saved to: $outputPath")
     }
 
-    /**
-     * Selection 정보를 하나의 객체로 추출
-     * 추후 이미지 변환 / Excel 기록에서 재사용
-     */
     private fun extractSelectionMetadata(
         project: Project,
         editor: Editor
@@ -44,31 +55,14 @@ object CodeSelectionService {
             .getInstance()
             .getFile(document) ?: return null
 
-        val basePath = project.basePath ?: return null
-        val absolutePath = virtualFile.path
-
-        val relativePath = absolutePath.removePrefix("$basePath/")
+        val relativePath = virtualFile.name
 
         return SelectionMetadata(
-            fileName = relativePath,   // 🔥 여기 변경
+            fileName = relativePath,
             startLine = startLine,
             endLine = endLine,
-            code = selectedText
+            code = selectedText,
+            virtualFile = virtualFile   // 🔥 추가
         )
-    }
-
-
-    /**
-     * 현재는 로그 출력만 수행
-     * 추후 Logger로 교체 가능
-     */
-    private fun logSelection(metadata: SelectionMetadata) {
-
-        println("===== Code Selection =====")
-        println("File: ${metadata.fileName}")
-        println("Start Line: ${metadata.startLine}")
-        println("End Line: ${metadata.endLine}")
-        println("Selected Code:")
-        println(metadata.code)
     }
 }
