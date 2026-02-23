@@ -1,12 +1,11 @@
 package com.gyujh.codetoexcel.editor
 
+import com.gyujh.codetoexcel.excel.ExcelWriter
+import com.intellij.notification.NotificationGroupManager
+import com.intellij.notification.NotificationType
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
-import java.nio.file.Files
-import java.nio.file.Paths
-import java.util.UUID
-import javax.imageio.ImageIO
 
 object CodeSelectionService {
 
@@ -24,17 +23,19 @@ object CodeSelectionService {
                 minCodeAreaWidthPx = 480
             )
         )
-        val basePath = project.basePath ?: return
-        val imageDir = Paths.get(basePath, ".codetoexcel")
 
-        Files.createDirectories(imageDir)
+        val lineCount = (metadata.endLine - metadata.startLine + 1).coerceAtLeast(1)
+        val result = ExcelWriter().insertImage(image, lineCount)
+        val notificationType = if (result.success) NotificationType.INFORMATION else NotificationType.ERROR
 
-        val fileName = "${UUID.randomUUID()}.png"
-        val outputPath = imageDir.resolve(fileName)
-
-        ImageIO.write(image, "png", outputPath.toFile())
-
-        println("Image saved to: $outputPath")
+        NotificationGroupManager.getInstance()
+            .getNotificationGroup("CodeToExcelNotification")
+            .createNotification(
+                "Code To Excel",
+                result.message,
+                notificationType
+            )
+            .notify(project)
     }
 
     private fun extractSelectionMetadata(
