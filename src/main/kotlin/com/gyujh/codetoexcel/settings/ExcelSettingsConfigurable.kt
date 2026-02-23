@@ -5,15 +5,22 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
-import com.intellij.ui.components.JBTextField
 import com.intellij.util.ui.FormBuilder
+import org.apache.poi.ss.usermodel.DataFormatter
+import org.apache.poi.ss.usermodel.WorkbookFactory
+import org.apache.poi.ss.util.CellReference
+import java.awt.BorderLayout
 import javax.swing.*
+import javax.swing.event.DocumentEvent
+import javax.swing.event.DocumentListener
 import java.io.File
 
 class ExcelSettingsConfigurable : Configurable {
 
     private val excelPathField = TextFieldWithBrowseButton()
-    private val baseColumnField = JBTextField()
+    private val clearFileButton = JButton("해제")
+    private val baseSheetCombo = JComboBox<String>()
+    private val baseColumnCombo = JComboBox<ColumnOption>()
 
     override fun getDisplayName(): String = "Code To Excel"
 
@@ -22,7 +29,8 @@ class ExcelSettingsConfigurable : Configurable {
 
         excelPathField.textField.isEditable = false
         excelPathField.text = settings.excelPath
-        baseColumnField.text = settings.baseColumn
+        baseSheetCombo.isEnabled = false
+        baseColumnCombo.isEnabled = false
 
         val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("xlsx")
         descriptor.title = "Select Excel File"
@@ -37,35 +45,76 @@ class ExcelSettingsConfigurable : Configurable {
 
             if (virtualFile != null) {
                 excelPathField.text = virtualFile.path
+                refreshSheets(
+                    virtualFile.path,
+                    baseSheetCombo.selectedItem as? String,
+                    selectedColumnRef()
+                )
             }
         }
 
+        clearFileButton.addActionListener {
+            clearSelection()
+        }
+
+        excelPathField.textField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent?) = onPathChanged()
+            override fun removeUpdate(e: DocumentEvent?) = onPathChanged()
+            override fun changedUpdate(e: DocumentEvent?) = onPathChanged()
+        })
+
+        baseSheetCombo.addActionListener {
+            refreshColumns(
+                excelPathField.text.trim(),
+                baseSheetCombo.selectedItem as? String,
+                selectedColumnRef()
+            )
+        }
+
+        refreshSheets(
+            settings.excelPath,
+            settings.baseSheet.ifBlank { null },
+            settings.baseColumn
+        )
+
+        val baseColumnDescription = JLabel("코드 삽입이 될 기준열을 선택합니다.")
+        baseColumnDescription.font = baseColumnDescription.font.deriveFont(baseColumnDescription.font.size2D - 1f)
+
+        val filePanel = JPanel(BorderLayout(8, 0))
+        filePanel.add(excelPathField, BorderLayout.CENTER)
+        filePanel.add(clearFileButton, BorderLayout.EAST)
+
         return FormBuilder.createFormBuilder()
-            .addLabeledComponent("Excel File:", excelPathField)
-            .addLabeledComponent("Base Column (A, B, C...):", baseColumnField)
+            .addLabeledComponent("Excel File:", filePanel)
+            .addLabeledComponent("Base Sheet:", baseSheetCombo)
+            .addLabeledComponent("Base Column:", baseColumnCombo)
+            .addComponent(baseColumnDescription)
             .addComponentFillVertically(JPanel(), 0)
             .panel
     }
 
     override fun isModified(): Boolean {
         val settings = ExcelSettingsState.Companion.getInstance()
+        val selectedSheet = baseSheetCombo.selectedItem as? String ?: ""
+        val selectedColumn = selectedColumnRef() ?: ""
 
         return excelPathField.text != settings.excelPath ||
-                baseColumnField.text != settings.baseColumn
+                selectedSheet != settings.baseSheet ||
+                selectedColumn != settings.baseColumn
     }
 
     override fun apply() {
         val settings = ExcelSettingsState.Companion.getInstance()
 
         val path = excelPathField.text.trim()
-        val column = baseColumnField.text.trim()
+        val selectedSheet = baseSheetCombo.selectedItem as? String
+        val selectedColumn = selectedColumnRef()
 
-        // Excel 파일 선택 필수
+        // 파일 미선택 상태 저장 허용
         if (path.isEmpty()) {
-            Messages.showErrorDialog(
-                "Please select an Excel file.",
-                "Excel File Required"
-            )
+            settings.excelPath = ""
+            settings.baseSheet = ""
+            settings.baseColumn = "A"
             return
         }
 
@@ -78,18 +127,128 @@ class ExcelSettingsConfigurable : Configurable {
             return
         }
 
-        // Base Column 유효성 검사 (대문자만 허용)
-        val columnRegex = Regex("^[A-Z]+$")
-
-        if (!columnRegex.matches(column)) {
+        if (selectedSheet.isNullOrBlank()) {
             Messages.showErrorDialog(
-                "Base Column must contain only uppercase letters (A-Z).\nExamples: A, B, AA, AB",
-                "Invalid Base Column"
+                "Please select a base sheet.",
+                "Base Sheet Required"
+            )
+            return
+        }
+
+        if (selectedColumn.isNullOrBlank()) {
+            Messages.showErrorDialog(
+                "Please select a base column.",
+                "Base Column Required"
             )
             return
         }
 
         settings.excelPath = path
-        settings.baseColumn = column
+        settings.baseSheet = selectedSheet
+        settings.baseColumn = selectedColumn
+    }
+
+    private fun onPathChanged() {
+        refreshSheets(
+            excelPathField.text.trim(),
+            baseSheetCombo.selectedItem as? String,
+            selectedColumnRef()
+        )
+    }
+
+    private fun clearSelection() {
+        excelPathField.text = ""
+        baseSheetCombo.removeAllItems()
+        baseColumnCombo.removeAllItems()
+        baseSheetCombo.isEnabled = false
+        baseColumnCombo.isEnabled = false
+    }
+
+    private fun selectedColumnRef(): String? =
+        (baseColumnCombo.selectedItem as? ColumnOption)?.columnRef
+
+    private fun refreshSheets(path: String, preferredSheet: String?, preferredColumn: String?) {
+        val sheets = if (path.isBlank()) {
+            emptyList()
+        } else {
+            readSheetNames(path)
+        }
+
+        baseSheetCombo.removeAllItems()
+        sheets.forEach { baseSheetCombo.addItem(it) }
+        baseSheetCombo.isEnabled = sheets.isNotEmpty()
+
+        val targetSheet = preferredSheet?.takeIf { sheets.contains(it) } ?: sheets.firstOrNull()
+        if (targetSheet != null) {
+            baseSheetCombo.selectedItem = targetSheet
+        }
+
+        refreshColumns(path, targetSheet, preferredColumn)
+    }
+
+    private fun refreshColumns(path: String, sheetName: String?, preferredColumn: String?) {
+        val columns = if (path.isBlank() || sheetName.isNullOrBlank()) {
+            emptyList()
+        } else {
+            readColumns(path, sheetName)
+        }
+
+        baseColumnCombo.removeAllItems()
+        columns.forEach { baseColumnCombo.addItem(it) }
+        baseColumnCombo.isEnabled = columns.isNotEmpty()
+
+        val targetColumn = preferredColumn?.uppercase()?.takeIf { preferred ->
+            columns.any { it.columnRef == preferred }
+        } ?: columns.firstOrNull()?.columnRef
+
+        if (targetColumn != null) {
+            for (i in 0 until baseColumnCombo.itemCount) {
+                val option = baseColumnCombo.getItemAt(i)
+                if (option.columnRef == targetColumn) {
+                    baseColumnCombo.selectedIndex = i
+                    break
+                }
+            }
+        }
+    }
+
+    private fun readSheetNames(path: String): List<String> {
+        return runCatching {
+            WorkbookFactory.create(File(path)).use { workbook ->
+                (0 until workbook.numberOfSheets).map { workbook.getSheetName(it) }
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    private fun readColumns(path: String, sheetName: String): List<ColumnOption> {
+        return runCatching {
+            WorkbookFactory.create(File(path)).use { workbook ->
+                val sheet = workbook.getSheet(sheetName) ?: return@use emptyList()
+                val formatter = DataFormatter()
+
+                val headerRow = (sheet.firstRowNum..sheet.lastRowNum)
+                    .asSequence()
+                    .mapNotNull { sheet.getRow(it) }
+                    .firstOrNull { row -> row.lastCellNum > 0 }
+
+                if (headerRow == null || headerRow.lastCellNum <= 0) {
+                    return@use emptyList()
+                }
+
+                (0 until headerRow.lastCellNum).map { columnIndex ->
+                    val columnRef = CellReference.convertNumToColString(columnIndex)
+                    val header = formatter.formatCellValue(headerRow.getCell(columnIndex)).trim()
+                    val label = if (header.isEmpty()) columnRef else "$columnRef - $header"
+                    ColumnOption(label, columnRef)
+                }
+            }
+        }.getOrElse { emptyList() }
+    }
+
+    private data class ColumnOption(
+        private val label: String,
+        val columnRef: String
+    ) {
+        override fun toString(): String = label
     }
 }

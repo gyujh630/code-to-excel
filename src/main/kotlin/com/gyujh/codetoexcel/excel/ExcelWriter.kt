@@ -18,7 +18,11 @@ class ExcelWriter {
         val workbook = XSSFWorkbook(fis)
         fis.close()
 
-        val sheet = workbook.getSheetAt(0)
+        val sheet = if (settings.baseSheet.isNotBlank()) {
+            workbook.getSheet(settings.baseSheet) ?: workbook.getSheetAt(0)
+        } else {
+            workbook.getSheetAt(0)
+        }
 
         val position = calculatePosition(
             settings.baseColumn,

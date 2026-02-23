@@ -9,6 +9,7 @@ import com.intellij.openapi.components.*
 class ExcelSettingsState : PersistentStateComponent<ExcelSettingsState> {
 
     var excelPath: String = ""
+    var baseSheet: String = ""
     var baseColumn: String = "A"
     var baseRow: Int = 1
 
@@ -16,6 +17,7 @@ class ExcelSettingsState : PersistentStateComponent<ExcelSettingsState> {
 
     override fun loadState(state: ExcelSettingsState) {
         this.excelPath = state.excelPath
+        this.baseSheet = state.baseSheet
         this.baseColumn = state.baseColumn
         this.baseRow = state.baseRow
     }
