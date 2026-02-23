@@ -1,5 +1,6 @@
 package com.gyujh.codetoexcel.editor
 
+import com.gyujh.codetoexcel.excel.component.CodeImageExcelComponent
 import com.gyujh.codetoexcel.excel.ExcelWriter
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
@@ -19,13 +20,17 @@ object CodeSelectionService {
             virtualFile = metadata.virtualFile,
             firstLineNumber = metadata.startLine,
             options = RenderOptions(
-                headerTitle = metadata.fileName,
                 minCodeAreaWidthPx = 480
             )
         )
 
         val lineCount = (metadata.endLine - metadata.startLine + 1).coerceAtLeast(1)
-        val result = ExcelWriter().insertImage(image, lineCount)
+        val component = CodeImageExcelComponent(
+            title = metadata.fileName,
+            sourceImage = image,
+            lineCount = lineCount
+        )
+        val result = ExcelWriter().insertComponent(component)
         val notificationType = if (result.success) NotificationType.INFORMATION else NotificationType.ERROR
 
         NotificationGroupManager.getInstance()

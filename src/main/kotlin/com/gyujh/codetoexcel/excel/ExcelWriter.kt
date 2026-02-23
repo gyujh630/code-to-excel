@@ -1,5 +1,6 @@
 package com.gyujh.codetoexcel.excel
 
+import com.gyujh.codetoexcel.excel.component.ExcelInsertComponent
 import com.gyujh.codetoexcel.settings.ExcelSettingsState
 import org.apache.poi.ss.usermodel.ClientAnchor
 import org.apache.poi.util.Units
@@ -8,19 +9,16 @@ import org.apache.poi.xssf.usermodel.XSSFDrawing
 import org.apache.poi.xssf.usermodel.XSSFPicture
 import org.apache.poi.xssf.usermodel.XSSFSheet
 import org.apache.poi.xssf.usermodel.XSSFWorkbook
-import java.awt.image.BufferedImage
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
 import javax.imageio.ImageIO
 import kotlin.math.max
-import kotlin.math.min
-import kotlin.math.roundToInt
 
 class ExcelWriter {
 
-    fun insertImage(image: BufferedImage, lineCount: Int): ImageInsertResult {
+    fun insertComponent(component: ExcelInsertComponent): ImageInsertResult {
         val settings = ExcelSettingsState.getInstance()
         val excelPath = settings.excelPath.trim()
         val baseSheet = settings.baseSheet.trim()
@@ -49,6 +47,9 @@ class ExcelWriter {
         }
 
         return runCatching {
+            var insertedWidth = 0
+            var insertedHeight = 0
+
             FileInputStream(file).use { fis ->
                 XSSFWorkbook(fis).use { workbook ->
                     val sheet = workbook.getSheet(baseSheet)
@@ -57,8 +58,13 @@ class ExcelWriter {
                     val targetColumnIndex = columnToIndex(baseColumn)
                     val targetRowIndex = baseRow - 1
 
+                    val cellHeightPx = emuToPixel(rowHeightEmu(sheet, targetRowIndex)).coerceAtLeast(MIN_COMPONENT_HEIGHT_PX)
+                    val rendered = component.render(cellHeightPx)
+                    insertedWidth = rendered.bounds.width
+                    insertedHeight = rendered.bounds.height
+
                     val pngBytes = ByteArrayOutputStream().use { bos ->
-                        ImageIO.write(image, "png", bos)
+                        ImageIO.write(rendered.image, "png", bos)
                         bos.toByteArray()
                     }
 
@@ -78,27 +84,6 @@ class ExcelWriter {
                         laneBottomYEmu = cellBottomYEmu
                     )
 
-                    val normalizedLineCount = lineCount.coerceAtLeast(1)
-                    val lineBasedHeightPx = normalizedLineCount * LINE_HEIGHT_PX + LINE_BASE_PADDING_PX
-                    val lineBasedHeightEmu = Units.pixelToEMU(
-                        lineBasedHeightPx.coerceAtMost(MAX_LINE_BASED_HEIGHT_PX)
-                    )
-                    val absoluteHeightCapEmu = Units.pixelToEMU(MAX_IMAGE_HEIGHT_PX)
-                    val maxAllowedHeightEmu = min(cellHeightEmu, min(lineBasedHeightEmu, absoluteHeightCapEmu))
-                    if (maxAllowedHeightEmu <= 0) {
-                        return ImageInsertResult(false, "기준 셀 높이가 0이어서 이미지를 삽입할 수 없습니다.")
-                    }
-
-                    val sourceWidthEmu = Units.pixelToEMU(image.width)
-                    val sourceHeightEmu = Units.pixelToEMU(image.height)
-                    if (sourceWidthEmu <= 0 || sourceHeightEmu <= 0) {
-                        return ImageInsertResult(false, "생성된 이미지 크기가 유효하지 않습니다.")
-                    }
-
-                    val scale = min(1.0, maxAllowedHeightEmu.toDouble() / sourceHeightEmu.toDouble())
-                    val displayWidthEmu = max(1, (sourceWidthEmu * scale).roundToInt())
-                    val displayHeightEmu = max(1, (sourceHeightEmu * scale).roundToInt())
-
                     val startXEmu = if (laneMaxRightXEmu > cellLeftXEmu) {
                         laneMaxRightXEmu + Units.pixelToEMU(IMAGE_GAP_PX)
                     } else {
@@ -106,8 +91,8 @@ class ExcelWriter {
                         cellLeftXEmu + Units.pixelToEMU(FIRST_IMAGE_OFFSET_PX)
                     }
                     val startYEmu = cellTopYEmu
-                    val endXEmu = startXEmu + displayWidthEmu
-                    val endYEmu = startYEmu + displayHeightEmu
+                    val endXEmu = startXEmu + Units.pixelToEMU(rendered.bounds.width)
+                    val endYEmu = startYEmu + Units.pixelToEMU(rendered.bounds.height)
 
                     val startAnchor = resolveAnchorPointByEmu(sheet, startXEmu, startYEmu)
                     val endAnchor = resolveAnchorPointByEmu(sheet, endXEmu, endYEmu)
@@ -131,7 +116,10 @@ class ExcelWriter {
                 }
             }
 
-            ImageInsertResult(true, "이미지를 $baseSheet!$baseColumn$baseRow 위치에 추가했습니다.")
+            ImageInsertResult(
+                true,
+                "컴포넌트를 $baseSheet!$baseColumn$baseRow 위치에 추가했습니다. 그룹 크기: ${insertedWidth}x${insertedHeight}px"
+            )
         }.getOrElse { error ->
             ImageInsertResult(false, "엑셀 이미지 삽입 실패: ${error.message ?: "알 수 없는 오류"}")
         }
@@ -230,6 +218,9 @@ class ExcelWriter {
         return Units.toEMU(points)
     }
 
+    private fun emuToPixel(emu: Int): Int =
+        (emu.toDouble() / Units.EMU_PER_PIXEL.toDouble()).toInt()
+
     private fun columnToIndex(column: String): Int {
         var result = 0
         for (char in column) {
@@ -251,10 +242,7 @@ class ExcelWriter {
     companion object {
         private const val IMAGE_GAP_PX = 8
         private const val FIRST_IMAGE_OFFSET_PX = 3
-        private const val MAX_IMAGE_HEIGHT_PX = 220
-        private const val MAX_LINE_BASED_HEIGHT_PX = 200
-        private const val LINE_HEIGHT_PX = 18
-        private const val LINE_BASE_PADDING_PX = 16
+        private const val MIN_COMPONENT_HEIGHT_PX = 40
     }
 }
 

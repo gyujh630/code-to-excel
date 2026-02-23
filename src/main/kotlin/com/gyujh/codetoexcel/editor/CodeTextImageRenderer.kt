@@ -25,11 +25,6 @@ data class RenderOptions(
     val fontSize: Int? = null,          // null이면 IDE 폰트 크기 사용
     val tabSize: Int = 4,               // 탭 폭(공백 몇 칸)
 
-    // Header (text only)
-    val showHeader: Boolean = true,
-    val headerGap: Int = 22,            // 헤더-코드 간격
-    val headerTitle: String? = null,    // Service에서 상대경로 넘길 것
-
     // Layout polish
     val minCodeAreaWidthPx: Int = 520   // 코드가 짧아도 보기 좋은 최소 폭(텍스트 영역 기준)
 )
@@ -55,10 +50,6 @@ object CodeTextImageRenderer {
         val baseFont = schemeToFont(scheme, options)
         val fm = fontMetricsFor(baseFont)
 
-        // Header text (no line range)
-        val rawHeaderText = options.headerTitle?.takeIf { it.isNotBlank() } ?: virtualFile.name
-        val headerHeight = if (options.showHeader) fm.height else 0
-
         // line-number digits based on real lines only
         val realLineCount = max(1, code.count { it == '\n' } + 1)
         val endLineNumber = firstLineNumber + realLineCount - 1
@@ -74,7 +65,7 @@ object CodeTextImageRenderer {
         val spans = tokenizeToSpans(code, syntaxHighlighter, scheme, baseFont)
 
         val startX = options.paddingX + lineNumberAreaWidth
-        val startY = options.paddingY + (if (options.showHeader) headerHeight + options.headerGap else 0)
+        val startY = options.paddingY
 
         val layout = LayoutEngine.layout(
             spans = spans,
@@ -87,10 +78,7 @@ object CodeTextImageRenderer {
             firstLineNumber = firstLineNumber
         )
 
-        // ✅ 폭 결정 규칙:
-        // - 헤더 길이로 폭을 늘리지 않는다
-        // - 코드가 짧으면 minCodeAreaWidthPx 만큼 확보
-        // - 절대 maxWidthPx(텍스트영역 기준)를 넘겨 커지지 않게 상한 적용
+        // 코드가 짧으면 minCodeAreaWidthPx 만큼 확보, 절대 maxWidthPx를 넘기지 않음
         val minCodeTotalW = options.paddingX * 2 + lineNumberAreaWidth + options.minCodeAreaWidthPx
         val codeTotalW = layout.maxX + options.paddingX
 
@@ -100,14 +88,8 @@ object CodeTextImageRenderer {
 
         val imgH = max(
             layout.maxY + options.paddingY,
-            options.paddingY * 2 + headerHeight + fm.height
+            options.paddingY * 2 + fm.height
         )
-
-        // ✅ leading ellipsis: 헤더는 "고정된 imgW"에 맞춰 자른다
-        val headerText = if (options.showHeader) {
-            val maxHeaderTextWidth = (imgW - options.paddingX * 2).coerceAtLeast(40)
-            ellipsizeLeading(rawHeaderText, fm, maxHeaderTextWidth)
-        } else rawHeaderText
 
         val image = UIUtil.createImage(imgW, imgH, BufferedImage.TYPE_INT_ARGB)
         val g = image.createGraphics()
@@ -116,17 +98,6 @@ object CodeTextImageRenderer {
 
             g.color = scheme.defaultBackground
             g.fillRect(0, 0, imgW, imgH)
-
-            // Header text only
-            if (options.showHeader) {
-                drawHeaderTextOnly(
-                    g = g,
-                    baseFont = baseFont,
-                    text = headerText,
-                    x = options.paddingX,
-                    y = options.paddingY
-                )
-            }
 
             // Line numbers (no numbers for wrapped visual lines)
             if (options.showLineNumbers) {
@@ -147,29 +118,6 @@ object CodeTextImageRenderer {
         }
 
         return image
-    }
-
-    // ---------- Leading ellipsis helper (…/abc/a.java) ----------
-
-    private fun ellipsizeLeading(text: String, fm: FontMetrics, maxWidth: Int): String {
-        if (fm.stringWidth(text) <= maxWidth) return text
-
-        val ell = "…"
-        val ellW = fm.stringWidth(ell)
-        if (ellW >= maxWidth) return ell
-
-        val budget = maxWidth - ellW
-
-        var lo = 0
-        var hi = text.length
-        while (lo < hi) {
-            val mid = (lo + hi + 1) / 2
-            val tail = text.substring(text.length - mid)
-            if (fm.stringWidth(tail) <= budget) lo = mid else hi = mid - 1
-        }
-
-        val tail = text.substring(text.length - lo)
-        return ell + tail
     }
 
     // ---------- Tokenization ----------
@@ -241,27 +189,6 @@ object CodeTextImageRenderer {
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON)
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON)
         g.setRenderingHint(RenderingHints.KEY_FRACTIONALMETRICS, RenderingHints.VALUE_FRACTIONALMETRICS_ON)
-    }
-
-    // ---------- Header (text only) ----------
-
-    private fun drawHeaderTextOnly(
-        g: Graphics2D,
-        baseFont: Font,
-        text: String,
-        x: Int,
-        y: Int
-    ) {
-        val headerFont = baseFont.deriveFont(Font.BOLD, baseFont.size2D)
-        val headerFm = g.getFontMetrics(headerFont)
-
-        val headerColor = Color(255, 248, 200)
-
-        g.font = headerFont
-        g.color = headerColor
-
-        val textY = y + headerFm.ascent
-        g.drawString(text, x, textY)
     }
 
     // ---------- Line numbers (wrap 줄은 표시하지 않음) ----------
