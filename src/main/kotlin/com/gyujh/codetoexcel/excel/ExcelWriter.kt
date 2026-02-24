@@ -1,6 +1,7 @@
 package com.gyujh.codetoexcel.excel
 
 import com.gyujh.codetoexcel.excel.component.ExcelInsertComponent
+import com.gyujh.codetoexcel.excel.component.GroupBoundsPx
 import com.gyujh.codetoexcel.settings.ExcelSettingsState
 import org.apache.poi.ss.usermodel.ClientAnchor
 import org.apache.poi.util.Units
@@ -19,11 +20,15 @@ import kotlin.math.max
 class ExcelWriter {
 
     fun insertComponent(component: ExcelInsertComponent): ImageInsertResult {
+        return insertComponent(component, null)
+    }
+
+    fun insertComponent(component: ExcelInsertComponent, rowOverride: Int?): ImageInsertResult {
         val settings = ExcelSettingsState.getInstance()
         val excelPath = settings.excelPath.trim()
         val baseSheet = settings.baseSheet.trim()
         val baseColumn = settings.baseColumn.trim().uppercase()
-        val baseRow = settings.baseRow
+        val baseRow = rowOverride ?: settings.baseRow
 
         if (excelPath.isEmpty()) {
             return ImageInsertResult(false, "엑셀 파일이 선택되지 않았습니다.")
@@ -55,60 +60,15 @@ class ExcelWriter {
                     val sheet = workbook.getSheet(baseSheet)
                         ?: return ImageInsertResult(false, "시트를 찾을 수 없습니다: $baseSheet")
 
-                    val targetColumnIndex = columnToIndex(baseColumn)
-                    val targetRowIndex = baseRow - 1
-
-                    val cellHeightPx = emuToPixel(rowHeightEmu(sheet, targetRowIndex)).coerceAtLeast(MIN_COMPONENT_HEIGHT_PX)
-                    val rendered = component.render(cellHeightPx)
-                    insertedWidth = rendered.bounds.width
-                    insertedHeight = rendered.bounds.height
-
-                    val pngBytes = ByteArrayOutputStream().use { bos ->
-                        ImageIO.write(rendered.image, "png", bos)
-                        bos.toByteArray()
-                    }
-
-                    val pictureIndex = workbook.addPicture(pngBytes, XSSFWorkbook.PICTURE_TYPE_PNG)
-                    val drawing = sheet.createDrawingPatriarch() as XSSFDrawing
-
-                    val cellLeftXEmu = absoluteXOfCellEmu(sheet, targetColumnIndex)
-                    val cellTopYEmu = absoluteYOfRowEmu(sheet, targetRowIndex)
-                    val cellHeightEmu = rowHeightEmu(sheet, targetRowIndex)
-                    val cellBottomYEmu = cellTopYEmu + cellHeightEmu
-
-                    val laneMaxRightXEmu = findLaneMaxRightXEmu(
+                    val info = insertComponent(
+                        workbook = workbook,
                         sheet = sheet,
-                        drawing = drawing,
-                        laneStartXEmu = cellLeftXEmu,
-                        laneTopYEmu = cellTopYEmu,
-                        laneBottomYEmu = cellBottomYEmu
+                        baseColumn = baseColumn,
+                        baseRow = baseRow,
+                        component = component
                     )
-
-                    val startXEmu = if (laneMaxRightXEmu > cellLeftXEmu) {
-                        laneMaxRightXEmu + Units.pixelToEMU(IMAGE_GAP_PX)
-                    } else {
-                        // 첫 이미지는 요청 보정값만큼 우측에서 시작
-                        cellLeftXEmu + Units.pixelToEMU(FIRST_IMAGE_OFFSET_PX)
-                    }
-                    val startYEmu = cellTopYEmu
-                    val endXEmu = startXEmu + Units.pixelToEMU(rendered.bounds.width)
-                    val endYEmu = startYEmu + Units.pixelToEMU(rendered.bounds.height)
-
-                    val startAnchor = resolveAnchorPointByEmu(sheet, startXEmu, startYEmu)
-                    val endAnchor = resolveAnchorPointByEmu(sheet, endXEmu, endYEmu)
-
-                    val anchor = XSSFClientAnchor(
-                        startAnchor.dx,
-                        startAnchor.dy,
-                        endAnchor.dx,
-                        endAnchor.dy,
-                        startAnchor.col,
-                        startAnchor.row,
-                        endAnchor.col,
-                        endAnchor.row
-                    )
-                    anchor.anchorType = ClientAnchor.AnchorType.MOVE_DONT_RESIZE
-                    drawing.createPicture(anchor, pictureIndex) as XSSFPicture
+                    insertedWidth = info.bounds.width
+                    insertedHeight = info.bounds.height
 
                     FileOutputStream(file).use { fos ->
                         workbook.write(fos)
@@ -123,6 +83,71 @@ class ExcelWriter {
         }.getOrElse { error ->
             ImageInsertResult(false, "엑셀 이미지 삽입 실패: ${error.message ?: "알 수 없는 오류"}")
         }
+    }
+
+    fun insertComponent(
+        workbook: XSSFWorkbook,
+        sheet: XSSFSheet,
+        baseColumn: String,
+        baseRow: Int,
+        component: ExcelInsertComponent
+    ): InsertedPictureInfo {
+        val targetColumnIndex = columnToIndex(baseColumn)
+        val targetRowIndex = baseRow - 1
+
+        val cellHeightPx = emuToPixel(rowHeightEmu(sheet, targetRowIndex)).coerceAtLeast(MIN_COMPONENT_HEIGHT_PX)
+        val rendered = component.render(cellHeightPx)
+
+        val pngBytes = ByteArrayOutputStream().use { bos ->
+            ImageIO.write(rendered.image, "png", bos)
+            bos.toByteArray()
+        }
+
+        val pictureIndex = workbook.addPicture(pngBytes, XSSFWorkbook.PICTURE_TYPE_PNG)
+        val drawing = sheet.createDrawingPatriarch() as XSSFDrawing
+
+        val cellLeftXEmu = absoluteXOfCellEmu(sheet, targetColumnIndex)
+        val cellTopYEmu = absoluteYOfRowEmu(sheet, targetRowIndex)
+        val cellHeightEmu = rowHeightEmu(sheet, targetRowIndex)
+        val cellBottomYEmu = cellTopYEmu + cellHeightEmu
+
+        val laneMaxRightXEmu = findLaneMaxRightXEmu(
+            sheet = sheet,
+            drawing = drawing,
+            laneStartXEmu = cellLeftXEmu,
+            laneTopYEmu = cellTopYEmu,
+            laneBottomYEmu = cellBottomYEmu
+        )
+
+        val startXEmu = if (laneMaxRightXEmu > cellLeftXEmu) {
+            laneMaxRightXEmu + Units.pixelToEMU(IMAGE_GAP_PX)
+        } else {
+            cellLeftXEmu + Units.pixelToEMU(FIRST_IMAGE_OFFSET_PX)
+        }
+        val startYEmu = cellTopYEmu
+        val endXEmu = startXEmu + Units.pixelToEMU(rendered.bounds.width)
+        val endYEmu = startYEmu + Units.pixelToEMU(rendered.bounds.height)
+
+        val startAnchor = resolveAnchorPointByEmu(sheet, startXEmu, startYEmu)
+        val endAnchor = resolveAnchorPointByEmu(sheet, endXEmu, endYEmu)
+
+        val anchor = XSSFClientAnchor(
+            startAnchor.dx,
+            startAnchor.dy,
+            endAnchor.dx,
+            endAnchor.dy,
+            startAnchor.col,
+            startAnchor.row,
+            endAnchor.col,
+            endAnchor.row
+        )
+        anchor.anchorType = ClientAnchor.AnchorType.MOVE_DONT_RESIZE
+        drawing.createPicture(anchor, pictureIndex) as XSSFPicture
+
+        return InsertedPictureInfo(
+            anchor = anchor,
+            bounds = rendered.bounds
+        )
     }
 
     private fun findLaneMaxRightXEmu(
@@ -249,4 +274,9 @@ class ExcelWriter {
 data class ImageInsertResult(
     val success: Boolean,
     val message: String
+)
+
+data class InsertedPictureInfo(
+    val anchor: XSSFClientAnchor,
+    val bounds: GroupBoundsPx
 )

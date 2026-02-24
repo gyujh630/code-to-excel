@@ -1,6 +1,7 @@
 package com.gyujh.codetoexcel.toolwindow
 
 import com.gyujh.codetoexcel.settings.ExcelSettingsState
+import com.gyujh.codetoexcel.staging.StagingPanel
 import com.intellij.ui.components.JBLabel
 import com.intellij.ui.components.JBPanel
 import com.intellij.ui.components.JBTextField
@@ -9,10 +10,11 @@ import com.intellij.util.ui.UIUtil
 import java.awt.BorderLayout
 import javax.swing.*
 
-class ExcelToolWindowPanel : JPanel(BorderLayout()) {
+class ExcelToolWindowPanel(project: com.intellij.openapi.project.Project) : JPanel(BorderLayout()) {
 
     private val rowField = JBTextField(5)
     private val saveButton = JButton("Update")
+    private val stagingPanel = StagingPanel(project)
 
     init {
         val settings = ExcelSettingsState.getInstance()
@@ -45,7 +47,16 @@ class ExcelToolWindowPanel : JPanel(BorderLayout()) {
         container.add(rowPanel, BorderLayout.NORTH)
         container.add(descriptionLabel, BorderLayout.CENTER)
 
-        add(container, BorderLayout.NORTH)
+        val tabs = JTabbedPane()
+        tabs.addTab("Row", container)
+        tabs.addTab("Staging", stagingPanel)
+        tabs.addChangeListener {
+            if (tabs.selectedComponent === stagingPanel) {
+                stagingPanel.refresh()
+            }
+        }
+
+        add(tabs, BorderLayout.CENTER)
     }
 
     fun updateRowField(value: Int) {

@@ -8,7 +8,7 @@ import com.intellij.ui.content.ContentFactory
 class ExcelToolWindowFactory : ToolWindowFactory {
 
     override fun createToolWindowContent(project: Project, toolWindow: ToolWindow) {
-        val panel = ExcelToolWindowPanel()
+        val panel = ExcelToolWindowPanel(project)
         val content = ContentFactory.getInstance().createContent(panel, "", false)
         toolWindow.contentManager.addContent(content)
     }

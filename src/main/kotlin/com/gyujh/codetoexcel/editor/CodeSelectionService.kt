@@ -1,9 +1,6 @@
 package com.gyujh.codetoexcel.editor
 
-import com.gyujh.codetoexcel.excel.component.CodeImageExcelComponent
-import com.gyujh.codetoexcel.excel.ExcelWriter
-import com.intellij.notification.NotificationGroupManager
-import com.intellij.notification.NotificationType
+import com.gyujh.codetoexcel.staging.StagingService
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
@@ -23,24 +20,7 @@ object CodeSelectionService {
                 minCodeAreaWidthPx = 480
             )
         )
-
-        val lineCount = (metadata.endLine - metadata.startLine + 1).coerceAtLeast(1)
-        val component = CodeImageExcelComponent(
-            title = metadata.fileName,
-            sourceImage = image,
-            lineCount = lineCount
-        )
-        val result = ExcelWriter().insertComponent(component)
-        val notificationType = if (result.success) NotificationType.INFORMATION else NotificationType.ERROR
-
-        NotificationGroupManager.getInstance()
-            .getNotificationGroup("CodeToExcelNotification")
-            .createNotification(
-                "Code To Excel",
-                result.message,
-                notificationType
-            )
-            .notify(project)
+        StagingService().saveSelection(project, metadata, image)
     }
 
     private fun extractSelectionMetadata(
