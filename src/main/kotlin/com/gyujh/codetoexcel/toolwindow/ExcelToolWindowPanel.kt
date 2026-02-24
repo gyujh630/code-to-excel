@@ -32,14 +32,14 @@ class ExcelToolWindowPanel(project: com.intellij.openapi.project.Project) : JPan
         rowPanel.layout = BoxLayout(rowPanel, BoxLayout.X_AXIS)
         rowPanel.border = JBUI.Borders.empty(8, 12, 0, 12)
 
-        rowPanel.add(JBLabel("Base Row:"))
+        rowPanel.add(JBLabel("테스트케이스 번호:"))
         rowPanel.add(Box.createHorizontalStrut(8))
         rowPanel.add(rowField)
         rowPanel.add(Box.createHorizontalStrut(8))
         rowPanel.add(saveButton)
 
         // 🔹 설명 라벨
-        val descriptionLabel = JBLabel("현재 위치한 테스트케이스 번호를 의미합니다.")
+        val descriptionLabel = JBLabel("현재 작업 중인 테스트케이스 번호(TC)를 의미합니다.")
         descriptionLabel.foreground = UIUtil.getContextHelpForeground()
         descriptionLabel.border = JBUI.Borders.empty(4, 12, 8, 12)
 

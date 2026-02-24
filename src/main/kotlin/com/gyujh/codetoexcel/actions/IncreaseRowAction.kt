@@ -29,7 +29,7 @@ class IncreaseRowAction : AnAction() {
             .getNotificationGroup("CodeToExcelNotification")
             .createNotification(
                 "Code To Excel",
-                "기준 행 업데이트  [TC-${settings.baseRow}번]",
+                "테스트케이스 번호 업데이트  [TC-${settings.baseRow}번]",
                 NotificationType.INFORMATION
             )
             .notify(project)

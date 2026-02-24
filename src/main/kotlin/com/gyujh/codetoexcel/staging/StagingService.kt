@@ -158,6 +158,7 @@ class StagingService(
         val excelPath = settings.excelPath.trim()
         val baseSheet = settings.baseSheet.trim()
         val baseColumn = settings.baseColumn.trim().uppercase()
+        val baseRowStart = settings.baseRowStart
         if (excelPath.isEmpty()) {
             notify(project, "엑셀 파일이 선택되지 않았습니다.", NotificationType.ERROR)
             return
@@ -168,6 +169,10 @@ class StagingService(
         }
         if (baseColumn.isEmpty()) {
             notify(project, "Base Column이 선택되지 않았습니다.", NotificationType.ERROR)
+            return
+        }
+        if (baseRowStart < 1) {
+            notify(project, "첫 테스트케이스 행은 1 이상이어야 합니다.", NotificationType.ERROR)
             return
         }
         if (!baseColumn.matches(Regex("^[A-Z]+$"))) {
@@ -199,7 +204,8 @@ class StagingService(
                     .flatMap { (rowKey, rowEntry) ->
                         val rowNumber = rowKey.toIntOrNull() ?: return@flatMap emptyList()
                         rowEntry.items.sortedBy { it.order }.map { item ->
-                            DesiredItem(rowNumber, item)
+                            val excelRow = baseRowStart + (rowNumber - 1)
+                            DesiredItem(excelRow, item)
                         }
                     }
                 val retained = existing.values.filter { it.sheetName != baseSheet }.toMutableList()

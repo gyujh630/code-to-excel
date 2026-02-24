@@ -21,6 +21,7 @@ class ExcelSettingsConfigurable : Configurable {
     private val clearFileButton = JButton("해제")
     private val baseSheetCombo = JComboBox<String>()
     private val baseColumnCombo = JComboBox<ColumnOption>()
+    private val baseRowStartField = JTextField(5)
 
     override fun getDisplayName(): String = "Code To Excel"
 
@@ -29,6 +30,7 @@ class ExcelSettingsConfigurable : Configurable {
 
         excelPathField.textField.isEditable = false
         excelPathField.text = settings.excelPath
+        baseRowStartField.text = settings.baseRowStart.toString()
         baseSheetCombo.isEnabled = false
         baseColumnCombo.isEnabled = false
 
@@ -62,6 +64,11 @@ class ExcelSettingsConfigurable : Configurable {
             override fun removeUpdate(e: DocumentEvent?) = onPathChanged()
             override fun changedUpdate(e: DocumentEvent?) = onPathChanged()
         })
+        baseRowStartField.document.addDocumentListener(object : DocumentListener {
+            override fun insertUpdate(e: DocumentEvent?) = onBaseRowStartChanged()
+            override fun removeUpdate(e: DocumentEvent?) = onBaseRowStartChanged()
+            override fun changedUpdate(e: DocumentEvent?) = onBaseRowStartChanged()
+        })
 
         baseSheetCombo.addActionListener {
             refreshColumns(
@@ -86,6 +93,7 @@ class ExcelSettingsConfigurable : Configurable {
 
         return FormBuilder.createFormBuilder()
             .addLabeledComponent("Excel File:", filePanel)
+            .addLabeledComponent("첫 테스트케이스 행:", baseRowStartField)
             .addLabeledComponent("Base Sheet:", baseSheetCombo)
             .addLabeledComponent("Base Column:", baseColumnCombo)
             .addComponent(baseColumnDescription)
@@ -99,6 +107,7 @@ class ExcelSettingsConfigurable : Configurable {
         val selectedColumn = selectedColumnRef() ?: ""
 
         return excelPathField.text != settings.excelPath ||
+                baseRowStartField.text.trim() != settings.baseRowStart.toString() ||
                 selectedSheet != settings.baseSheet ||
                 selectedColumn != settings.baseColumn
     }
@@ -109,12 +118,14 @@ class ExcelSettingsConfigurable : Configurable {
         val path = excelPathField.text.trim()
         val selectedSheet = baseSheetCombo.selectedItem as? String
         val selectedColumn = selectedColumnRef()
+        val baseRowStartValue = baseRowStartField.text.trim().toIntOrNull() ?: 0
 
         // 파일 미선택 상태 저장 허용
         if (path.isEmpty()) {
             settings.excelPath = ""
             settings.baseSheet = ""
             settings.baseColumn = "A"
+            settings.baseRowStart = 1
             return
         }
 
@@ -142,14 +153,30 @@ class ExcelSettingsConfigurable : Configurable {
             )
             return
         }
+        if (baseRowStartValue < 1) {
+            Messages.showErrorDialog(
+                "첫 테스트케이스 행은 1 이상이어야 합니다.",
+                "Invalid Row"
+            )
+            return
+        }
 
         settings.excelPath = path
         settings.baseSheet = selectedSheet
         settings.baseColumn = selectedColumn
+        settings.baseRowStart = baseRowStartValue
     }
 
     private fun onPathChanged() {
         refreshSheets(
+            excelPathField.text.trim(),
+            baseSheetCombo.selectedItem as? String,
+            selectedColumnRef()
+        )
+    }
+
+    private fun onBaseRowStartChanged() {
+        refreshColumns(
             excelPathField.text.trim(),
             baseSheetCombo.selectedItem as? String,
             selectedColumnRef()
@@ -190,7 +217,8 @@ class ExcelSettingsConfigurable : Configurable {
         val columns = if (path.isBlank() || sheetName.isNullOrBlank()) {
             emptyList()
         } else {
-            readColumns(path, sheetName)
+            val rowIndex = (baseRowStartField.text.trim().toIntOrNull() ?: 1) - 1
+            readColumns(path, sheetName, rowIndex)
         }
 
         baseColumnCombo.removeAllItems()
@@ -220,16 +248,12 @@ class ExcelSettingsConfigurable : Configurable {
         }.getOrElse { emptyList() }
     }
 
-    private fun readColumns(path: String, sheetName: String): List<ColumnOption> {
+    private fun readColumns(path: String, sheetName: String, rowIndex: Int): List<ColumnOption> {
         return runCatching {
             WorkbookFactory.create(File(path)).use { workbook ->
                 val sheet = workbook.getSheet(sheetName) ?: return@use emptyList()
                 val formatter = DataFormatter()
-
-                val headerRow = (sheet.firstRowNum..sheet.lastRowNum)
-                    .asSequence()
-                    .mapNotNull { sheet.getRow(it) }
-                    .firstOrNull { row -> row.lastCellNum > 0 }
+                val headerRow = sheet.getRow(rowIndex)
 
                 if (headerRow == null || headerRow.lastCellNum <= 0) {
                     return@use emptyList()
