@@ -141,8 +141,13 @@ class StagingStorage {
         return if (dot > 0) name.substring(0, dot) else name
     }
 
-    private fun sanitizeFolderName(name: String): String =
-        FileUtil.sanitizeFileName(name, false)
+    private fun sanitizeFolderName(name: String): String {
+        val cleaned = name
+            .replace(Regex("[\\\\/:*?\"<>|]"), "_")
+            .replace(Regex("\\s+"), " ")
+            .trim()
+        return if (cleaned.isBlank()) "excel" else cleaned
+    }
 
     companion object {
         private const val ROOT_FOLDER = "code-to-excel"

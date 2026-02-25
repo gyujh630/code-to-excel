@@ -202,10 +202,10 @@ class StagingService(
                 val desiredItems = index.rows
                     .toSortedMap(compareBy { it.toIntOrNull() ?: 0 })
                     .flatMap { (rowKey, rowEntry) ->
-                        val rowNumber = rowKey.toIntOrNull() ?: return@flatMap emptyList()
+                        val testNo = rowKey.toIntOrNull() ?: return@flatMap emptyList()
                         rowEntry.items.sortedBy { it.order }.map { item ->
-                            val excelRow = baseRowStart + (rowNumber - 1)
-                            DesiredItem(excelRow, item)
+                            val excelRow = baseRowStart + (testNo - 1)
+                            DesiredItem(testNo, excelRow, item)
                         }
                     }
                 val retained = existing.values.filter { it.sheetName != baseSheet }.toMutableList()
@@ -219,7 +219,7 @@ class StagingService(
                 // insert all desired items in order
                 val newEntries = mutableListOf<HiddenEntry>()
                 for (desired in desiredItems) {
-                    val rowFolder = storage.ensureRowFolder(excelPath, desired.rowNumber)
+                    val rowFolder = storage.ensureRowFolder(excelPath, desired.testNo)
                     val imageFile = rowFolder.resolve(desired.item.file)
                     if (!Files.exists(imageFile)) {
                         notify(project, "이미지 파일을 찾을 수 없습니다: ${desired.item.file}", NotificationType.ERROR)
@@ -235,7 +235,7 @@ class StagingService(
                         workbook = workbook,
                         sheet = sheet,
                         baseColumn = baseColumn,
-                        baseRow = desired.rowNumber,
+                        baseRow = desired.excelRow,
                         component = component
                     )
                     newEntries.add(HiddenEntry.from(desired.item.id, baseSheet, info))
@@ -291,7 +291,8 @@ class StagingService(
 }
 
 private data class DesiredItem(
-    val rowNumber: Int,
+    val testNo: Int,
+    val excelRow: Int,
     val item: StagedItem
 )
 

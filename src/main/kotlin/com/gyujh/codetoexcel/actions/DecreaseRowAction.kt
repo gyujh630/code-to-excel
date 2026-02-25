@@ -31,7 +31,7 @@ class DecreaseRowAction : AnAction() {
             .getNotificationGroup("CodeToExcelNotification")
             .createNotification(
                 "Code To Excel",
-                "테스트케이스 번호 업데이트  [TC-${settings.baseRow}번]",
+                "테스트케이스 번호 변경  [TC-${settings.baseRow}번]",
                 NotificationType.INFORMATION
             )
             .notify(project)

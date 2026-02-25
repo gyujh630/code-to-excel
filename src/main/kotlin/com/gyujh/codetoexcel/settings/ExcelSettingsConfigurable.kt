@@ -5,15 +5,19 @@ import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory
 import com.intellij.openapi.options.Configurable
 import com.intellij.openapi.ui.Messages
 import com.intellij.openapi.ui.TextFieldWithBrowseButton
+import com.intellij.ui.ContextHelpLabel
 import com.intellij.util.ui.FormBuilder
+import com.gyujh.codetoexcel.staging.StagingStorage
 import org.apache.poi.ss.usermodel.DataFormatter
 import org.apache.poi.ss.usermodel.WorkbookFactory
 import org.apache.poi.ss.util.CellReference
 import java.awt.BorderLayout
+import java.awt.Desktop
 import javax.swing.*
 import javax.swing.event.DocumentEvent
 import javax.swing.event.DocumentListener
 import java.io.File
+import com.intellij.openapi.util.text.StringUtil
 
 class ExcelSettingsConfigurable : Configurable {
 
@@ -22,6 +26,8 @@ class ExcelSettingsConfigurable : Configurable {
     private val baseSheetCombo = JComboBox<String>()
     private val baseColumnCombo = JComboBox<ColumnOption>()
     private val baseRowStartField = JTextField(5)
+    private val stagingPathLabel = JLabel("엑셀 파일 선택 시 경로가 표시됩니다.")
+    private val openStagingButton = JButton("폴더 열기")
 
     override fun getDisplayName(): String = "Code To Excel"
 
@@ -33,6 +39,7 @@ class ExcelSettingsConfigurable : Configurable {
         baseRowStartField.text = settings.baseRowStart.toString()
         baseSheetCombo.isEnabled = false
         baseColumnCombo.isEnabled = false
+        openStagingButton.isEnabled = false
 
         val descriptor = FileChooserDescriptorFactory.createSingleFileDescriptor("xlsx")
         descriptor.title = "Select Excel File"
@@ -83,20 +90,45 @@ class ExcelSettingsConfigurable : Configurable {
             settings.baseSheet.ifBlank { null },
             settings.baseColumn
         )
-
-        val baseColumnDescription = JLabel("코드 삽입이 될 기준열을 선택합니다.")
-        baseColumnDescription.font = baseColumnDescription.font.deriveFont(baseColumnDescription.font.size2D - 1f)
+        refreshStagingPath()
 
         val filePanel = JPanel(BorderLayout(8, 0))
         filePanel.add(excelPathField, BorderLayout.CENTER)
         filePanel.add(clearFileButton, BorderLayout.EAST)
 
+        val stagingPanel = JPanel(BorderLayout(8, 0))
+        stagingPanel.add(stagingPathLabel, BorderLayout.CENTER)
+        stagingPanel.add(openStagingButton, BorderLayout.EAST)
+
+        openStagingButton.addActionListener {
+            val path = stagingPathLabel.text.trim()
+            if (path.isNotBlank()) {
+                runCatching { Desktop.getDesktop().open(File(path)) }
+                    .onFailure {
+                        Messages.showErrorDialog(
+                            "폴더를 열 수 없습니다.",
+                            "Open Folder Failed"
+                        )
+                    }
+            }
+        }
+
+        val baseRowHelp = ContextHelpLabel.create("첫 테스트케이스가 들어갈 기준행을 선택합니다.")
+        val baseColumnHelp = ContextHelpLabel.create("코드 삽입이 될 기준열을 선택합니다.")
+        val baseRowPanel = JPanel(BorderLayout(6, 0))
+        baseRowPanel.add(baseRowStartField, BorderLayout.CENTER)
+        baseRowPanel.add(baseRowHelp, BorderLayout.EAST)
+
+        val baseColumnPanel = JPanel(BorderLayout(6, 0))
+        baseColumnPanel.add(baseColumnCombo, BorderLayout.CENTER)
+        baseColumnPanel.add(baseColumnHelp, BorderLayout.EAST)
+
         return FormBuilder.createFormBuilder()
             .addLabeledComponent("Excel File:", filePanel)
-            .addLabeledComponent("첫 테스트케이스 행:", baseRowStartField)
+            .addLabeledComponent("Staging Folder:", stagingPanel)
             .addLabeledComponent("Base Sheet:", baseSheetCombo)
-            .addLabeledComponent("Base Column:", baseColumnCombo)
-            .addComponent(baseColumnDescription)
+            .addLabeledComponent("Base Row:", baseRowPanel)
+            .addLabeledComponent("Base Column:", baseColumnPanel)
             .addComponentFillVertically(JPanel(), 0)
             .panel
     }
@@ -173,6 +205,7 @@ class ExcelSettingsConfigurable : Configurable {
             baseSheetCombo.selectedItem as? String,
             selectedColumnRef()
         )
+        refreshStagingPath()
     }
 
     private fun onBaseRowStartChanged() {
@@ -189,6 +222,22 @@ class ExcelSettingsConfigurable : Configurable {
         baseColumnCombo.removeAllItems()
         baseSheetCombo.isEnabled = false
         baseColumnCombo.isEnabled = false
+        refreshStagingPath()
+    }
+
+    private fun refreshStagingPath() {
+        val path = excelPathField.text.trim()
+        if (path.isBlank()) {
+            stagingPathLabel.text = "엑셀 파일 선택 시 경로가 표시됩니다."
+            stagingPathLabel.toolTipText = null
+            openStagingButton.isEnabled = false
+            return
+        }
+        val folder = StagingStorage().resolveExcelFolder(path)
+        val fullPath = folder.toString()
+        stagingPathLabel.text = StringUtil.shortenPathWithEllipsis(fullPath, 60)
+        stagingPathLabel.toolTipText = fullPath
+        openStagingButton.isEnabled = true
     }
 
     private fun selectedColumnRef(): String? =
@@ -217,7 +266,8 @@ class ExcelSettingsConfigurable : Configurable {
         val columns = if (path.isBlank() || sheetName.isNullOrBlank()) {
             emptyList()
         } else {
-            val rowIndex = (baseRowStartField.text.trim().toIntOrNull() ?: 1) - 1
+            val baseRowStart = baseRowStartField.text.trim().toIntOrNull() ?: 1
+            val rowIndex = (baseRowStart - 2).coerceAtLeast(0)
             readColumns(path, sheetName, rowIndex)
         }
 
