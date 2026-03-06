@@ -28,6 +28,7 @@ class ExcelSettingsConfigurable : Configurable {
     private val baseRowStartField = JTextField(5)
     private val stagingPathLabel = JLabel("엑셀 파일 선택 시 경로가 표시됩니다.")
     private val openStagingButton = JButton("폴더 열기")
+    private var stagingPathFull: String? = null
 
     override fun getDisplayName(): String = "Code To Excel"
 
@@ -101,7 +102,7 @@ class ExcelSettingsConfigurable : Configurable {
         stagingPanel.add(openStagingButton, BorderLayout.EAST)
 
         openStagingButton.addActionListener {
-            val path = stagingPathLabel.text.trim()
+            val path = stagingPathFull?.trim().orEmpty()
             if (path.isNotBlank()) {
                 runCatching { Desktop.getDesktop().open(File(path)) }
                     .onFailure {
@@ -230,6 +231,7 @@ class ExcelSettingsConfigurable : Configurable {
         if (path.isBlank()) {
             stagingPathLabel.text = "엑셀 파일 선택 시 경로가 표시됩니다."
             stagingPathLabel.toolTipText = null
+            stagingPathFull = null
             openStagingButton.isEnabled = false
             return
         }
@@ -237,6 +239,7 @@ class ExcelSettingsConfigurable : Configurable {
         val fullPath = folder.toString()
         stagingPathLabel.text = StringUtil.shortenPathWithEllipsis(fullPath, 60)
         stagingPathLabel.toolTipText = fullPath
+        stagingPathFull = fullPath
         openStagingButton.isEnabled = true
     }
 

@@ -8,7 +8,8 @@ interface ExcelInsertComponent {
 
 data class RenderedExcelComponent(
     val image: BufferedImage,
-    val bounds: GroupBoundsPx
+    val bounds: GroupBoundsPx,
+    val dpi: Int = 96
 )
 
 data class GroupBoundsPx(

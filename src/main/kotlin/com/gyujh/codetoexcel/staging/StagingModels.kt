@@ -34,5 +34,6 @@ data class StagedItem(
     val lineCount: Int,
     val startLine: Int = 0,
     val endLine: Int = 0,
-    var desc: String = ""
+    var desc: String = "",
+    var renderScale: Int = 1
 )

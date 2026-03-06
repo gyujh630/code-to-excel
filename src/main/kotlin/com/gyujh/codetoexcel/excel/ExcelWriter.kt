@@ -16,6 +16,9 @@ import java.io.FileInputStream
 import java.io.FileOutputStream
 import javax.imageio.ImageIO
 import kotlin.math.max
+import kotlin.math.min
+import kotlin.math.roundToInt
+import java.util.zip.CRC32
 
 class ExcelWriter {
 
@@ -95,15 +98,16 @@ class ExcelWriter {
         val targetColumnIndex = columnToIndex(baseColumn)
         val targetRowIndex = baseRow - 1
 
-        val cellHeightPx = emuToPixel(rowHeightEmu(sheet, targetRowIndex)).coerceAtLeast(MIN_COMPONENT_HEIGHT_PX)
-        val rendered = component.render(cellHeightPx)
+        val rendered = component.render(Int.MAX_VALUE)
 
         val pngBytes = ByteArrayOutputStream().use { bos ->
             ImageIO.write(rendered.image, "png", bos)
             bos.toByteArray()
         }
+        val dpi = rendered.dpi.coerceAtLeast(96)
+        val pngBytesWithDpi = addPngDpi(pngBytes, dpi, dpi)
 
-        val pictureIndex = workbook.addPicture(pngBytes, XSSFWorkbook.PICTURE_TYPE_PNG)
+        val pictureIndex = workbook.addPicture(pngBytesWithDpi, XSSFWorkbook.PICTURE_TYPE_PNG)
         val drawing = sheet.createDrawingPatriarch() as XSSFDrawing
 
         val cellLeftXEmu = absoluteXOfCellEmu(sheet, targetColumnIndex)
@@ -119,16 +123,38 @@ class ExcelWriter {
             laneBottomYEmu = cellBottomYEmu
         )
 
+        val sourceWidthEmu = Units.pixelToEMU(rendered.image.width)
+        val sourceHeightEmu = Units.pixelToEMU(rendered.image.height)
+        val charDeltaScale = CODE_CHAR_WIDTH_DELTA_PX / BASE_CODE_CHAR_WIDTH_PX
+        val deltaWidthEmu = max(1, (sourceWidthEmu * charDeltaScale).roundToInt())
+        val deltaHeightEmu = max(1, (sourceHeightEmu * charDeltaScale).roundToInt())
+        val maxAllowedHeightEmu = Units.pixelToEMU(MAX_IMAGE_HEIGHT_PX)
+        val heightScale = min(1.0, maxAllowedHeightEmu.toDouble() / deltaHeightEmu.toDouble())
+        val displayWidthEmu = max(1, (deltaWidthEmu * heightScale).roundToInt())
         val startXEmu = if (laneMaxRightXEmu > cellLeftXEmu) {
             laneMaxRightXEmu + Units.pixelToEMU(IMAGE_GAP_PX)
         } else {
             cellLeftXEmu + Units.pixelToEMU(FIRST_IMAGE_OFFSET_PX)
         }
         val startYEmu = cellTopYEmu
-        val endXEmu = startXEmu + Units.pixelToEMU(rendered.bounds.width)
-        val endYEmu = startYEmu + Units.pixelToEMU(rendered.bounds.height)
 
         val startAnchor = resolveAnchorPointByEmu(sheet, startXEmu, startYEmu)
+        val actualStartXEmu = absoluteXFromAnchorEmu(sheet, startAnchor.col, startAnchor.dx)
+        val actualStartYEmu = absoluteYFromAnchorEmu(sheet, startAnchor.row, startAnchor.dy)
+
+        val widthScaleFromDelta = displayWidthEmu.toDouble() / sourceWidthEmu.toDouble()
+        val heightLimitScale = maxAllowedHeightEmu.toDouble() / sourceHeightEmu.toDouble()
+
+        // ✅ 수정: 셀 너비를 초과하지 않도록 cellWidthLimitScale 추가
+        val cellWidthEmu = columnWidthEmu(sheet, targetColumnIndex)
+        val cellWidthLimitScale = cellWidthEmu.toDouble() / sourceWidthEmu.toDouble()
+
+        val finalScale = min(widthScaleFromDelta, min(heightLimitScale, cellWidthLimitScale))
+
+        val targetWidthEmu = max(1, (sourceWidthEmu.toDouble() * finalScale).roundToInt())
+        val targetHeightEmu = max(1, (sourceHeightEmu.toDouble() * finalScale).roundToInt())
+        val endXEmu = actualStartXEmu + targetWidthEmu
+        val endYEmu = actualStartYEmu + targetHeightEmu
         val endAnchor = resolveAnchorPointByEmu(sheet, endXEmu, endYEmu)
 
         val anchor = XSSFClientAnchor(
@@ -141,8 +167,12 @@ class ExcelWriter {
             endAnchor.col,
             endAnchor.row
         )
-        anchor.anchorType = ClientAnchor.AnchorType.MOVE_DONT_RESIZE
-        drawing.createPicture(anchor, pictureIndex) as XSSFPicture
+        anchor.anchorType = ClientAnchor.AnchorType.DONT_MOVE_AND_RESIZE
+        val picture = drawing.createPicture(anchor, pictureIndex) as XSSFPicture
+        // Keep shape extents in exact EMU size to avoid tiny aspect drift from anchor/grid rounding.
+        val ext = picture.ctPicture.spPr.xfrm.ext
+        ext.setCx(targetWidthEmu.toLong())
+        ext.setCy(targetHeightEmu.toLong())
 
         return InsertedPictureInfo(
             anchor = anchor,
@@ -163,8 +193,10 @@ class ExcelWriter {
             val picture = shape as? XSSFPicture ?: continue
             val anchor = picture.anchor as? XSSFClientAnchor ?: continue
 
-            val rightXEmu = absoluteXFromAnchorEmu(sheet, anchor.col2.toInt(), anchor.dx2)
             val topYEmu = absoluteYFromAnchorEmu(sheet, anchor.row1.toInt(), anchor.dy1)
+            val leftXEmu = absoluteXFromAnchorEmu(sheet, anchor.col1.toInt(), anchor.dx1)
+            val extCx = picture.ctPicture?.spPr?.xfrm?.ext?.cx?.toInt() ?: 0
+            val rightXEmu = leftXEmu + max(0, extCx)
 
             val inSameLane =
                 topYEmu >= laneTopYEmu && topYEmu < laneBottomYEmu && rightXEmu > laneStartXEmu
@@ -183,17 +215,19 @@ class ExcelWriter {
     }
 
     private fun resolveXByEmu(sheet: XSSFSheet, absoluteXEmu: Int): Pair<Int, Int> {
-        var remaining = absoluteXEmu.coerceAtLeast(0)
+        val targetPx = absoluteXEmu.coerceAtLeast(0).toDouble() / Units.EMU_PER_PIXEL.toDouble()
         var col = 0
+        var consumedPx = 0.0
 
         while (true) {
-            val width = columnWidthEmu(sheet, col)
-            if (remaining <= width) break
-            remaining -= width
+            val widthPx = columnWidthPx(sheet, col)
+            if (consumedPx + widthPx >= targetPx) break
+            consumedPx += widthPx
             col += 1
         }
 
-        val dx = remaining
+        val dxPx = (targetPx - consumedPx).coerceAtLeast(0.0)
+        val dx = (dxPx * Units.EMU_PER_PIXEL.toDouble()).roundToInt()
         return col to dx
     }
 
@@ -213,11 +247,11 @@ class ExcelWriter {
     }
 
     private fun absoluteXOfCellEmu(sheet: XSSFSheet, columnIndex: Int): Int {
-        var x = 0
+        var xPx = 0.0
         for (c in 0 until columnIndex) {
-            x += columnWidthEmu(sheet, c)
+            xPx += columnWidthPx(sheet, c)
         }
-        return x
+        return (xPx * Units.EMU_PER_PIXEL.toDouble()).roundToInt()
     }
 
     private fun absoluteYOfRowEmu(sheet: XSSFSheet, rowIndex: Int): Int {
@@ -234,17 +268,17 @@ class ExcelWriter {
     private fun absoluteYFromAnchorEmu(sheet: XSSFSheet, row: Int, dy: Int): Int =
         absoluteYOfRowEmu(sheet, row) + dy
 
+    private fun columnWidthPx(sheet: XSSFSheet, columnIndex: Int): Double =
+        sheet.getColumnWidthInPixels(columnIndex).toDouble()
+
     private fun columnWidthEmu(sheet: XSSFSheet, columnIndex: Int): Int =
-        Units.columnWidthToEMU(sheet.getColumnWidth(columnIndex))
+        (columnWidthPx(sheet, columnIndex) * Units.EMU_PER_PIXEL.toDouble()).roundToInt()
 
     private fun rowHeightEmu(sheet: XSSFSheet, rowIndex: Int): Int {
         val row = sheet.getRow(rowIndex)
         val points = row?.heightInPoints?.toDouble() ?: sheet.defaultRowHeightInPoints.toDouble()
         return Units.toEMU(points)
     }
-
-    private fun emuToPixel(emu: Int): Int =
-        (emu.toDouble() / Units.EMU_PER_PIXEL.toDouble()).toInt()
 
     private fun columnToIndex(column: String): Int {
         var result = 0
@@ -267,7 +301,11 @@ class ExcelWriter {
     companion object {
         private const val IMAGE_GAP_PX = 8
         private const val FIRST_IMAGE_OFFSET_PX = 3
-        private const val MIN_COMPONENT_HEIGHT_PX = 40
+        private const val MAX_IMAGE_HEIGHT_PX = 4096
+        // One-code-character width delta used for Excel insert scaling (independent from cell width).
+        private const val CODE_CHAR_WIDTH_DELTA_PX = 5.2
+        // Baseline code-character width in the renderer's pixel space.
+        private const val BASE_CODE_CHAR_WIDTH_PX = 8.0
     }
 }
 
@@ -280,3 +318,61 @@ data class InsertedPictureInfo(
     val anchor: XSSFClientAnchor,
     val bounds: GroupBoundsPx
 )
+
+private fun addPngDpi(png: ByteArray, dpiX: Int, dpiY: Int): ByteArray {
+    val signature = byteArrayOf(
+        0x89.toByte(), 0x50, 0x4E, 0x47,
+        0x0D, 0x0A, 0x1A, 0x0A
+    )
+    if (png.size < 8 || !png.copyOfRange(0, 8).contentEquals(signature)) return png
+
+    var offset = 8
+    if (png.size < offset + 8) return png
+
+    val ihdrLength = readInt(png, offset)
+    val ihdrType = String(png, offset + 4, 4, Charsets.ISO_8859_1)
+    if (ihdrType != "IHDR") return png
+
+    val ihdrTotal = 4 + 4 + ihdrLength + 4
+    val insertAt = offset + ihdrTotal
+
+    val xppm = (dpiX * 39.3701).toInt()
+    val yppm = (dpiY * 39.3701).toInt()
+    val data = ByteArray(9)
+    writeInt(data, 0, xppm)
+    writeInt(data, 4, yppm)
+    data[8] = 1
+
+    val chunk = buildChunk("pHYs", data)
+
+    return png.copyOfRange(0, insertAt) + chunk + png.copyOfRange(insertAt, png.size)
+}
+
+private fun buildChunk(type: String, data: ByteArray): ByteArray {
+    val length = data.size
+    val out = ByteArray(4 + 4 + length + 4)
+    writeInt(out, 0, length)
+    val typeBytes = type.toByteArray(Charsets.ISO_8859_1)
+    System.arraycopy(typeBytes, 0, out, 4, 4)
+    System.arraycopy(data, 0, out, 8, length)
+
+    val crc = CRC32()
+    crc.update(typeBytes)
+    crc.update(data)
+    writeInt(out, 8 + length, crc.value.toInt())
+    return out
+}
+
+private fun readInt(bytes: ByteArray, offset: Int): Int {
+    return (bytes[offset].toInt() and 0xFF shl 24) or
+            (bytes[offset + 1].toInt() and 0xFF shl 16) or
+            (bytes[offset + 2].toInt() and 0xFF shl 8) or
+            (bytes[offset + 3].toInt() and 0xFF)
+}
+
+private fun writeInt(bytes: ByteArray, offset: Int, value: Int) {
+    bytes[offset] = (value ushr 24).toByte()
+    bytes[offset + 1] = (value ushr 16).toByte()
+    bytes[offset + 2] = (value ushr 8).toByte()
+    bytes[offset + 3] = value.toByte()
+}

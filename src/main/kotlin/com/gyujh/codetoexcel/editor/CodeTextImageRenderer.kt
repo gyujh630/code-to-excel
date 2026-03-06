@@ -24,6 +24,7 @@ data class RenderOptions(
     val maxWidthPx: Int = 900,          // wrap 최대 폭(코드 텍스트 영역 기준)
     val fontSize: Int? = null,          // null이면 IDE 폰트 크기 사용
     val tabSize: Int = 4,               // 탭 폭(공백 몇 칸)
+    val supersampleScale: Int = 1,      // 텍스트 선명도 향상을 위한 렌더 배율
 
     // Layout polish
     val minCodeAreaWidthPx: Int = 520   // 코드가 짧아도 보기 좋은 최소 폭(텍스트 영역 기준)
@@ -91,10 +92,16 @@ object CodeTextImageRenderer {
             options.paddingY * 2 + fm.height
         )
 
-        val image = UIUtil.createImage(imgW, imgH, BufferedImage.TYPE_INT_ARGB)
+        val supersample = options.supersampleScale.coerceAtLeast(1)
+
+        // Use a plain BufferedImage to avoid HiDPI scaling side-effects.
+        val image = BufferedImage(imgW * supersample, imgH * supersample, BufferedImage.TYPE_INT_ARGB)
         val g = image.createGraphics()
         try {
             prepareGraphics(g)
+            if (supersample > 1) {
+                g.scale(supersample.toDouble(), supersample.toDouble())
+            }
 
             g.color = scheme.defaultBackground
             g.fillRect(0, 0, imgW, imgH)

@@ -1,11 +1,16 @@
 package com.gyujh.codetoexcel.editor
 
 import com.gyujh.codetoexcel.staging.StagingService
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.fileEditor.FileDocumentManager
 import com.intellij.openapi.project.Project
+import java.nio.file.Files
+import java.nio.file.Path
+import javax.imageio.ImageIO
 
 object CodeSelectionService {
+    private val log = Logger.getInstance(CodeSelectionService::class.java)
 
     fun processSelection(project: Project, editor: Editor) {
 
@@ -17,9 +22,11 @@ object CodeSelectionService {
             virtualFile = metadata.virtualFile,
             firstLineNumber = metadata.startLine,
             options = RenderOptions(
-                minCodeAreaWidthPx = 480
+                minCodeAreaWidthPx = 480,
+                supersampleScale = 3
             )
         )
+        saveRenderedImageForDebug(project, metadata, image)
         StagingService().saveSelection(project, metadata, image)
     }
 
@@ -55,5 +62,28 @@ object CodeSelectionService {
             code = selectedText,
             virtualFile = virtualFile
         )
+    }
+
+    private fun saveRenderedImageForDebug(
+        project: Project,
+        metadata: SelectionMetadata,
+        image: java.awt.image.BufferedImage
+    ) {
+        val basePath = project.basePath ?: return
+        val debugDir = Path.of(basePath, ".codetoexcel-debug", "code-images")
+        val safeFileName = metadata.fileName
+            .replace("\\", "_")
+            .replace("/", "_")
+            .replace(":", "_")
+        val outFile = debugDir.resolve(
+            "${System.currentTimeMillis()}_${safeFileName}_${metadata.startLine}-${metadata.endLine}.png"
+        )
+
+        runCatching {
+            Files.createDirectories(debugDir)
+            ImageIO.write(image, "png", outFile.toFile())
+        }.onFailure {
+            log.warn("Failed to save debug image: ${outFile.toAbsolutePath()}", it)
+        }
     }
 }

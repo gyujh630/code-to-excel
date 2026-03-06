@@ -25,6 +25,9 @@ import org.apache.poi.xssf.usermodel.XSSFWorkbook
 class StagingService(
     private val storage: StagingStorage = StagingStorage()
 ) {
+    companion object {
+        private const val CODE_RENDER_SCALE = 3
+    }
 
     fun saveSelection(
         project: Project,
@@ -54,7 +57,8 @@ class StagingService(
             title = title,
             lineCount = lineCount,
             startLine = metadata.startLine,
-            endLine = metadata.endLine
+            endLine = metadata.endLine,
+            renderScale = CODE_RENDER_SCALE
         )
     }
 
@@ -66,7 +70,8 @@ class StagingService(
         title: String,
         lineCount: Int,
         startLine: Int = 0,
-        endLine: Int = 0
+        endLine: Int = 0,
+        renderScale: Int = 1
     ) {
         if (excelPath.isEmpty()) {
             notify(project, "엑셀 파일이 선택되지 않았습니다.", NotificationType.ERROR)
@@ -102,7 +107,8 @@ class StagingService(
                 lineCount = lineCount,
                 startLine = startLine,
                 endLine = endLine,
-                desc = ""
+                desc = "",
+                renderScale = renderScale.coerceAtLeast(1)
             )
         )
         storage.saveExcelIndex(excelPath, index)
@@ -229,7 +235,8 @@ class StagingService(
                     val component = CodeImageExcelComponent(
                         title = desired.item.title,
                         sourceImage = sourceImage,
-                        lineCount = desired.item.lineCount
+                        lineCount = desired.item.lineCount,
+                        renderScale = desired.item.renderScale
                     )
                     val info = writer.insertComponent(
                         workbook = workbook,
